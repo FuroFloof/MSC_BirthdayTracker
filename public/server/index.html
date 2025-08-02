@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>BD-Tracker</title>
+    <style>
+        /* ---------- THEME ---------- */
+        :root{--bg:#121212;--panel:#1e1e1e;--text:#e0e0e0;
+              --accent:#537895;--transparent:rgba(30,30,30,.8);}
+        html,body{margin:0;height:100%;background:var(--bg);color:var(--text);
+          font-family:system-ui,Arial,Helvetica,sans-serif;overflow:hidden;}
+    
+        /* ---------- LAYOUT ---------- */
+        #topbar{
+          display:flex;align-items:center;gap:1rem;
+          padding:.75rem 1rem;background:var(--panel);
+          box-shadow:0 2px 6px rgba(0,0,0,.45);position:relative;flex-wrap:wrap;
+        }
+        #searchInput{
+          background:#2c2c2c;border:1px solid #444;color:var(--text);
+          padding:.5rem .75rem;border-radius:6px;width:220px;
+        }
+        /* legend */
+        #legend{
+          font-size:.75rem;opacity:.7;flex:1 1 100%;margin-top:.4rem;
+          display:flex;flex-wrap:wrap;gap:.6rem;
+        }
+        #legend span{white-space:nowrap;}
+
+      /* ---------- THEME ---------- */
+      :root{--bg:#121212;--panel:#1e1e1e;--text:#e0e0e0;
+            --accent:#537895;--transparent:rgba(30,30,30,.8);}
+      html,body{margin:0;height:100%;background:var(--bg);color:var(--text);
+        font-family:system-ui,Arial,Helvetica,sans-serif;overflow:hidden;}
+
+      /* ---------- LAYOUT ---------- */
+      #topbar{display:flex;align-items:center;justify-content:space-between;
+        padding:.75rem 1rem;background:var(--panel);
+        box-shadow:0 2px 6px rgba(0,0,0,.45);position:relative;}
+      #searchInput{background:#2c2c2c;border:1px solid #444;color:var(--text);
+        padding:.5rem .75rem;border-radius:6px;width:220px;}
+
+      /* suggestions drop-down */
+      #suggestions{position:absolute;left:calc(100% - 236px);top:56px;
+        width:220px;max-height:180px;overflow:auto;background:var(--panel);
+        border:1px solid #444;border-top:none;display:none;z-index:30;}
+      .sugg-item{padding:.45rem .65rem;cursor:pointer;font-size:.85rem;}
+      .sugg-item:hover,.sugg-active{background:#333;}
+
+      #content{height:calc(100% - 56px);position:relative;}
+      #timeline-wrapper{height:100%;overflow:hidden;cursor:grab;}
+      #timeline-track{position:absolute;top:50%;left:0;height:4px;
+        background:var(--accent);transform:translateY(-50%);
+        transform-origin:0% 50%;will-change:transform;
+        transition:transform 60ms ease-out;}
+
+      /* ---------- AVATARS ---------- */
+      .avatar{position:absolute;top:50%;transform:translate(-50%,-50%);
+        width:48px;height:48px;border-radius:50%;border:2px solid var(--panel);
+        object-fit:cover;cursor:pointer;transition:transform .2s ease;z-index:2;}
+      .avatar:hover{transform:translate(-50%,-50%) scale(1.15);}
+
+      /* ---------- HOUR DOTS ---------- */
+      .hour-dot{position:absolute;top:50%;transform:translate(-50%,-50%);
+        width:8px;height:8px;border-radius:50%;background:var(--text);
+        opacity:.45;pointer-events:none;z-index:1;}
+
+      /* ---------- TOOLTIP ---------- */
+      #tooltip{position:absolute;padding:.3rem .55rem;background:var(--transparent);
+        border-radius:4px;font-size:.75rem;pointer-events:none;opacity:0;
+        transition:opacity .15s ease;}
+
+      /* ---------- MODAL ---------- */
+      dialog#entryModal{padding:0;border:none;border-radius:12px;
+        background:var(--transparent);color:var(--text);width:380px;}
+      dialog::backdrop{background:rgba(0,0,0,.6);}
+      .modal-header{display:flex;align-items:center;gap:.75rem;padding:1rem;}
+      .modal-header img{width:56px;height:56px;border-radius:50%;object-fit:cover;}
+      .modal-body img{width:100%;object-fit:contain;}
+      .close-btn{position:absolute;top:.5rem;right:.75rem;background:none;border:none;
+        color:var(--text);font-size:1.25rem;cursor:pointer;}
+    </style>
+  </head>
+  <body>
+    <div id="topbar">
+        <h3 style="margin:0;font-weight:500">Furo's stupid ass birthday timeline — Apr 29 2025</h3>
+        <input id="searchInput" placeholder="Search username…" autocomplete="off"/>
+        <div id="suggestions"></div>
+    
+        <!-- control legend -->
+        <div id="legend">
+          <span> Mouse 1 = Drag</span>
+          <span> Scroll = zoom</span>
+          <span> SHIFT + Scroll = stretch</span>
+          <span> Search = Search</span>
+          <span> Mouse 1 over pfp = view context</span>
+        </div>
+      </div>
+
+    <div id="content">
+      <div id="timeline-wrapper">
+        <div id="timeline-track"></div>
+        <div id="tooltip"></div>
+      </div>
+    </div>
+
+    <dialog id="entryModal">
+      <button class="close-btn" data-close>&times;</button>
+      <div class="modal-header">
+        <img id="modalAvatar"/>
+        <h4 id="modalUsername" style="margin:0"></h4>
+      </div>
+      <div class="modal-body"><img id="modalImage"/></div>
+    </dialog>
+
+    <script>
+        /* ── CONFIG ─────────────────────────────────────────── */
+        const DATA_URL="assets/json/timeline.json";
+        const BASE_MINUTE_PX=4,MINUTE_PX_MIN=0.6,MINUTE_PX_MAX=40;
+        const UNI_ZOOM_MIN=0.4,UNI_ZOOM_MAX=5,ZOOM_INTENSITY=0.0015;
+        
+        /* ── DOM refs ───────────────────────────────────────── */
+        const wrapper=document.getElementById("timeline-wrapper");
+        const track  =document.getElementById("timeline-track");
+        const tooltip=document.getElementById("tooltip");
+        const searchInput=document.getElementById("searchInput");
+        const suggBox=document.getElementById("suggestions");
+        const entryModal=document.getElementById("entryModal");
+        const modalAvatar=document.getElementById("modalAvatar");
+        const modalUsername=document.getElementById("modalUsername");
+        const modalImage=document.getElementById("modalImage");
+        
+        /* ── STATE ─────────────────────────────────────────── */
+        let minutePx=BASE_MINUTE_PX, uniScale=1, translateX=0;
+        const entries=[], hourDots=[];
+        let squashAnimId=null, zoomAnimId=null;
+        
+        /* ── helpers ───────────────────────────────────────── */
+        const clamp=(v,lo,hi)=>Math.min(Math.max(v,lo),hi);
+        const timeToMinutes=t=>{const[H,M]=t.split(":").map(Number);return H*60+M;};
+        
+        /* ── BUILD ────────────────────────────────────────── */
+        (async()=>{const data=await(await fetch(DATA_URL)).json();
+          buildHourDots();buildAvatars(data);addGestures();})();
+        
+        function buildHourDots(){for(let h=0;h<24;h++){
+          const d=document.createElement("div");d.className="hour-dot";track.appendChild(d);
+          hourDots.push({minutes:h*60,el:d});}}
+        function buildAvatars(data){data.forEach(e=>{
+          const m=timeToMinutes(e.time);
+          const img=document.createElement("img");
+          img.src=e.avatar;img.alt=e.username;img.className="avatar";
+          img.addEventListener("mouseenter",ev=>showTooltip(ev,e.time));
+          img.addEventListener("mouseleave",hideTooltip);
+          img.addEventListener("click",()=>openModal(e));
+          track.appendChild(img);entries.push({minutes:m,el:img,data:e});
+        });refreshLayout();}
+        
+        /* ── LAYOUT ───────────────────────────────────────── */
+        function refreshLayout(){
+          track.style.width=`${minutePx*1440}px`;
+          hourDots.forEach(({minutes,el})=>el.style.left=`${minutes*minutePx}px`);
+          entries.forEach(({minutes,el})=>el.style.left=`${minutes*minutePx}px`);
+          applyTransform();
+        }
+        function applyTransform(){
+          track.style.transform=`translate(${translateX}px,-50%) scale(${uniScale})`;
+        }
+        
+        /* ── TOOLTIP ─────────────────────────────────────── */
+        function showTooltip(e,time){
+          const r=e.target.getBoundingClientRect();
+          tooltip.textContent=time;
+          tooltip.style.left=r.left+r.width/2+"px";
+          tooltip.style.top=r.top-28+"px";
+          tooltip.style.opacity=1;
+        }
+        const hideTooltip=()=>tooltip.style.opacity=0;
+        
+        /* ── MODAL ───────────────────────────────────────── */
+        function openModal(e){
+          modalAvatar.src=e.avatar;
+          modalUsername.textContent=e.username;
+          modalImage.src=e.image;
+          entryModal.showModal();
+        }
+        entryModal.querySelector("[data-close]").onclick=()=>entryModal.close();
+        
+        /* ── INTERACTION (drag / wheel) ─────────────────── */
+        function addGestures(){
+          /* drag */
+          let drag=false,startX;
+          wrapper.addEventListener("pointerdown",e=>{
+            drag=true;startX=e.clientX;wrapper.style.cursor="grabbing";});
+          window.addEventListener("pointermove",e=>{
+            if(!drag)return;
+            translateX+=e.clientX-startX;startX=e.clientX;applyTransform();});
+          window.addEventListener("pointerup",()=>{drag=false;wrapper.style.cursor="grab";});
+        
+          /* wheel */
+          wrapper.addEventListener("wheel",e=>{
+            e.preventDefault();
+            const {left}=wrapper.getBoundingClientRect();
+            const cursorX=e.clientX-left;
+        
+            if(e.shiftKey){                       /* horizontal density */
+              const factor=1-e.deltaY*ZOOM_INTENSITY;
+              const targetPx=clamp(minutePx*factor,MINUTE_PX_MIN,MINUTE_PX_MAX);
+              if(targetPx===minutePx)return;
+              const minAtCur=(cursorX-translateX)/(minutePx*uniScale);
+              startSmoothStretch(targetPx,minAtCur,cursorX);
+              return;
+            }
+        
+            const sFactor=1-e.deltaY*ZOOM_INTENSITY;
+            const newScale=clamp(uniScale*sFactor,UNI_ZOOM_MIN,UNI_ZOOM_MAX);
+            if(newScale===uniScale)return;
+            const trackPx=(cursorX-translateX)/uniScale;
+            uniScale=newScale;
+            translateX=cursorX-trackPx*uniScale;
+            applyTransform();
+          },{passive:false});
+        }
+        
+        /* smooth horizontal stretch tween */
+        function startSmoothStretch(targetPx,minAtCur,cursorX){
+          if(squashAnimId)cancelAnimationFrame(squashAnimId);
+          const fromPx=minutePx,dur=120,start=performance.now();
+          const step=now=>{
+            const t=Math.min((now-start)/dur,1),ease=1-(1-t)*(1-t);
+            minutePx=fromPx+(targetPx-fromPx)*ease;
+            translateX=cursorX-minAtCur*minutePx*uniScale;
+            refreshLayout();
+            if(t<1)squashAnimId=requestAnimationFrame(step);
+          };
+          squashAnimId=requestAnimationFrame(step);
+        }
+        
+        /* ── SEARCH / suggestions ───────────────────────── */
+        searchInput.addEventListener("input",updateSuggestions);
+        searchInput.addEventListener("keydown",e=>{
+          const items=[...suggBox.children];
+          if(e.key==="ArrowDown"&&items.length){e.preventDefault();items[0].focus();}
+          if(e.key==="Enter"&&items.length){e.preventDefault();items[0].click();}
+        });
+        document.addEventListener("click",e=>{
+          if(e.target.closest("#topbar"))return;hideSuggestions();});
+        
+        function updateSuggestions(){
+          const q=searchInput.value.trim().toLowerCase();
+          suggBox.innerHTML="";
+          if(!q){hideSuggestions();return;}
+          const found=[...new Set(entries
+              .filter(o=>o.data.username.toLowerCase().includes(q))
+              .map(o=>o.data.username))].slice(0,15);
+          if(!found.length){hideSuggestions();return;}
+          found.forEach(name=>{
+            const div=document.createElement("div");
+            div.textContent=name;
+            div.tabIndex=0;
+            div.className="sugg-item";
+            div.onclick=()=>{jumpToUser(name);hideSuggestions();searchInput.blur();};
+            div.onkeydown=ev=>{
+              if(ev.key==="Enter")div.click();
+              if(ev.key==="ArrowDown"){ev.preventDefault();div.nextElementSibling?.focus();}
+              if(ev.key==="ArrowUp"){ev.preventDefault();(div.previousElementSibling||searchInput).focus();}
+            };
+            suggBox.appendChild(div);
+          });
+          suggBox.style.display="block";
+        }
+        function hideSuggestions(){suggBox.style.display="none";}
+        
+        /* ╭─────────────────────────────╮
+           │  Smooth zoom & center       │
+           ╰─────────────────────────────╯ */
+        function startZoomAndCenter(targetScale,targetTranslate){
+          if(zoomAnimId)cancelAnimationFrame(zoomAnimId);
+          const fromScale=uniScale, fromTrans=translateX;
+          const dur=180, start=performance.now();
+          const step=now=>{
+            const t=Math.min((now-start)/dur,1),ease=1-(1-t)*(1-t);
+            uniScale=fromScale+(targetScale-fromScale)*ease;
+            translateX=fromTrans+(targetTranslate-fromTrans)*ease;
+            applyTransform();
+            if(t<1)zoomAnimId=requestAnimationFrame(step);
+          };
+          zoomAnimId=requestAnimationFrame(step);
+        }
+        
+        function jumpToUser(name){
+          const tgt=entries.find(o=>o.data.username===name);
+          if(!tgt)return;
+        
+          /* calculate where the avatar should be centred */
+          const wrapperRect=wrapper.getBoundingClientRect();
+          const wrapperCenter=wrapperRect.width/2;
+          const avatarMinutes=tgt.minutes;
+        
+          const desiredScale=Math.max(uniScale,3);   // at least 3× zoom
+          const desiredTranslate=wrapperCenter - avatarMinutes*minutePx*desiredScale;
+        
+          startZoomAndCenter(desiredScale,desiredTranslate);
+        
+          /* bounce after zoom finishes */
+          setTimeout(()=>{
+            tgt.el.style.transition="transform .25s ease";
+            tgt.el.style.transform="translate(-50%,-50%) scale(1.35)";
+            setTimeout(()=>tgt.el.style.transform="translate(-50%,-50%)",400);
+          },200);   // slightly > zoom duration
+        }
+        
+        /* housekeeping */
+        window.addEventListener("resize",hideTooltip);
+        </script>
+  </body>
+</html>
